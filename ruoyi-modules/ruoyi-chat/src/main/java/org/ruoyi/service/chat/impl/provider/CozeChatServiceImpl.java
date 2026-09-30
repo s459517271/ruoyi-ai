@@ -368,10 +368,11 @@ public class CozeChatServiceImpl implements AbstractChatService {
         }
 
         private String requiredApiKey() {
-            if (StrUtil.isBlank(chatModelVo.getApiKey())) {
+            String apiKey = chatModelVo.getApiKey();
+            if (StrUtil.isBlank(apiKey)) {
                 throw new IllegalArgumentException("Coze apiKey cannot be blank");
             }
-            return chatModelVo.getApiKey();
+            return apiKey;
         }
 
         private String requiredBotId() {

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -34,7 +35,11 @@ public class RerankModelFactory {
     /**
      * 模型缓存，使用ConcurrentHashMap保证线程安全
      */
-    private final Map<String, RerankModelService> modelCache = new ConcurrentHashMap<>();
+    private final Map<ModelCacheKey, CachedModel> modelCache = new ConcurrentHashMap<>();
+
+    private record ModelCacheKey(Long id, String modelName, String providerCode) { }
+
+    private record CachedModel(ChatModelVo configuration, RerankModelService model) { }
 
     /**
      * 创建重排序模型实例
@@ -43,14 +48,22 @@ public class RerankModelFactory {
      * @param rerankModelName 重排序模型名称
      */
     public RerankModelService createModel(String rerankModelName) {
-        return modelCache.computeIfAbsent(rerankModelName, name -> {
-            ChatModelVo modelConfig = chatModelService.selectModelByName(rerankModelName);
-
-            if (modelConfig == null) {
-                throw new IllegalArgumentException("未找到重排序模型配置，name=" + name);
+        // 即使命中缓存，也先读取当前配置并校验厂商状态。
+        ChatModelVo modelConfig = chatModelService.selectModelByName(rerankModelName);
+        if (modelConfig == null) {
+            throw new IllegalArgumentException("未找到重排序模型配置，name=" + rerankModelName);
+        }
+        ModelCacheKey key = new ModelCacheKey(modelConfig.getId(),
+            modelConfig.getModelName(), modelConfig.getProviderCode());
+        return modelCache.compute(key, (ignored, cached) -> {
+            // ChatModelVo.equals deliberately excludes the secret, so compare it separately.
+            if (cached != null && modelConfig.equals(cached.configuration())
+                && Objects.equals(modelConfig.getApiKey(), cached.configuration().getApiKey())) {
+                return cached;
             }
-            return createModelInstance(modelConfig.getProviderCode(), modelConfig);
-        });
+            return new CachedModel(modelConfig,
+                createModelInstance(modelConfig.getProviderCode(), modelConfig));
+        }).model();
     }
 
     /**
@@ -62,7 +75,7 @@ public class RerankModelFactory {
     public void refreshModel(Long modelId) {
         ChatModelVo modelConfig = chatModelService.queryById(modelId);
         if (modelConfig != null) {
-            modelCache.remove(modelConfig.getModelName());
+            modelCache.keySet().removeIf(key -> modelId.equals(key.id()));
         }
     }
 
@@ -70,7 +83,7 @@ public class RerankModelFactory {
      * 按模型名称刷新缓存
      */
     public void refreshModelByName(String modelName) {
-        modelCache.remove(modelName);
+        modelCache.keySet().removeIf(key -> modelName.equals(key.modelName()));
     }
 
     /**

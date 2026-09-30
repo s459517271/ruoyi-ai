@@ -39,9 +39,10 @@ public class BeanConfig {
 
     @Bean
     @Primary
-    public ObjectMapper objectMapper() {
+    public ObjectMapper objectMapper(Jackson2ObjectMapperBuilder builder) {
         log.info("Configuration:create objectMapper");
-        ObjectMapper objectMapper = new Jackson2ObjectMapperBuilder().createXmlMapper(false).build();
+        // 使用容器中的构建器，保留全局日期格式、Module 和 Customizer 配置。
+        ObjectMapper objectMapper = builder.createXmlMapper(false).build();
         objectMapper.registerModules(LocalDateTimeUtil.getSimpleModule(), new JavaTimeModule(), new Jdk8Module());
         //设置null值不参与序列化(字段不被显示)
         objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);
@@ -54,8 +55,10 @@ public class BeanConfig {
         int processorsNum = Runtime.getRuntime().availableProcessors();
         log.info("mainExecutor,processorsNum:{}", processorsNum);
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(processorsNum * 2);
-        executor.setMaxPoolSize(100);
+        // 核心线程数不得超过最大线程数
+        int maxPoolSize = 100;
+        executor.setCorePoolSize(Math.min(processorsNum * 2, maxPoolSize));
+        executor.setMaxPoolSize(maxPoolSize);
         return executor;
     }
 

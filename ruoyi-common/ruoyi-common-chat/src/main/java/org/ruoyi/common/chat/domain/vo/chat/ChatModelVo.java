@@ -3,8 +3,11 @@ package org.ruoyi.common.chat.domain.vo.chat;
 
 import cn.idev.excel.annotation.ExcelIgnoreUnannotated;
 import cn.idev.excel.annotation.ExcelProperty;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import io.github.linpeilie.annotations.AutoMapper;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.ruoyi.common.chat.entity.chat.ChatModel;
 
 import java.io.Serial;
@@ -18,7 +21,7 @@ import java.io.Serializable;
  */
 @Data
 @ExcelIgnoreUnannotated
-@AutoMapper(target = ChatModel.class)
+@AutoMapper(target = ChatModel.class, convertGenerate = false)
 public class ChatModelVo implements Serializable {
 
     @Serial
@@ -74,9 +77,11 @@ public class ChatModelVo implements Serializable {
     private String apiHost;
 
     /**
-     * 密钥
+     * 列表、日志及导出不包含密钥；管理员编辑详情由 ChatModelDetailVo 回显原值。
      */
-    @ExcelProperty(value = "密钥")
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     private String apiKey;
 
     /**

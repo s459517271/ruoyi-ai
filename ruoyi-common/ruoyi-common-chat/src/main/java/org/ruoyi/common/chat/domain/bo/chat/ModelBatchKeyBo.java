@@ -1,8 +1,10 @@
 package org.ruoyi.common.chat.domain.bo.chat;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import lombok.ToString;
 import org.ruoyi.common.mybatis.core.domain.BaseEntity;
 
 /**
@@ -24,7 +26,10 @@ public class ModelBatchKeyBo extends BaseEntity {
     /**
      * 密钥
      */
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @NotBlank(message = "密钥不能为空")
+    @ToString.Exclude
+    @EqualsAndHashCode.Exclude
     private String apiKey;
 
 }

@@ -30,7 +30,8 @@ public class AtlasPredictionService {
         }
         Request request = new Request.Builder()
             .url(AtlasMediaSupport.endpoint(model.getApiHost(), "/model/prediction/" + predictionId))
-            .addHeader("Authorization", "Bearer " + model.getApiKey())
+            .addHeader("Authorization", "Bearer "
+                + model.getApiKey())
             .get()
             .build();
         try (Response response = okHttpClient.newCall(request).execute()) {
@@ -42,18 +43,31 @@ public class AtlasPredictionService {
                 log.warn("Atlas Cloud 预测任务不存在或已过期: predictionId={}, category={}", predictionId, model.getCategory());
                 return MediaGenerationResponse.builder()
                     .type(mediaType(model.getCategory()))
-                    .mimeType("image".equals(model.getCategory()) ? "image/png" : "video/mp4")
+                    .mimeType(mimeType(mediaType(model.getCategory()), null))
+                    .id(predictionId)
                     .status("failed")
                     .rawResponse(responseText)
                     .build();
             }
             if (!response.isSuccessful()) {
+                if (response.code() == 400 || response.code() == 422) {
+                    MediaGenerationResponse terminal = terminalFailure(responseText, predictionId, mediaType(model.getCategory()));
+                    if (terminal != null) return terminal;
+                }
                 throw new IllegalArgumentException("Atlas Cloud生成结果查询失败: " + response.code() + " - " + responseText);
             }
             return toResponse(responseText, mediaType(model.getCategory()));
         } catch (IOException e) {
             throw new RuntimeException("Atlas Cloud生成结果查询失败: " + e.getMessage(), e);
         }
+    }
+
+    MediaGenerationResponse terminalFailure(String raw, String predictionId, String type) throws IOException {
+        JsonNode data;
+        try { data = AtlasMediaSupport.OBJECT_MAPPER.readTree(raw).path("data"); }
+        catch (com.fasterxml.jackson.core.JsonProcessingException e) { return null; }
+        if (!predictionId.equals(data.path("id").asText()) || !"failed".equals(data.path("status").asText())) return null;
+        return toResponse(raw, type);
     }
 
     public MediaGenerationResponse toResponse(String raw, String type) throws IOException {
@@ -70,13 +84,29 @@ public class AtlasPredictionService {
         }
         return MediaGenerationResponse.builder()
             .type(type)
-            .mimeType("image".equals(type) ? "image/png" : "video/mp4")
+            .mimeType(mimeType(type, firstOutput(data)))
             .id(AtlasMediaSupport.text(data, "id"))
             .status(status)
             .url(firstOutput(data))
             .lastFrameUrl(lastFrameUrl)
             .rawResponse(raw)
             .build();
+    }
+
+    private String mimeType(String type, String url) {
+        String path = url == null ? "" : url.split("[?#]", 2)[0].toLowerCase(java.util.Locale.ROOT);
+        if ("audio".equals(type)) {
+            if (path.endsWith(".wav")) return "audio/wav";
+            if (path.endsWith(".ogg") || path.endsWith(".opus")) return "audio/ogg";
+            if (path.endsWith(".pcm")) return "application/octet-stream";
+            return "audio/mpeg";
+        }
+        if ("image".equals(type)) {
+            if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
+            if (path.endsWith(".webp")) return "image/webp";
+            return "image/png";
+        }
+        return "video/mp4";
     }
 
     /**
@@ -127,7 +157,11 @@ public class AtlasPredictionService {
         return null;
     }
 
-    private String mediaType(String category) {
-        return "image".equals(category) ? "image" : "video";
+    static String mediaType(String category) {
+        return switch (category) {
+            case "image" -> "image";
+            case "audio" -> "audio";
+            default -> "video";
+        };
     }
 }

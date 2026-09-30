@@ -20,6 +20,7 @@ import org.ruoyi.service.chat.AbstractChatService;
 import org.ruoyi.service.coding.CodingAgent;
 import org.ruoyi.service.coding.CodingEventChannel;
 import org.ruoyi.service.coding.CodingSseEvent;
+import org.ruoyi.service.coding.CodingWorkspaceService;
 import org.ruoyi.service.coding.ICodingService;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -27,7 +28,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -48,15 +48,18 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @RequiredArgsConstructor
 public class CodingServiceImpl implements ICodingService {
 
-    /** 默认工作目录：直接指向 ruoyi-copilot 前端项目 */
-    private static final String DEFAULT_WORKSPACE = "D:/Project/github/ruoyi-copilot";
+    static final String SAFE_CODING_ERROR_MESSAGE = "编程任务执行失败，请稍后重试";
 
     private final IChatModelService chatModelService;
     private final ChatServiceFactory chatServiceFactory;
+    private final CodingWorkspaceService workspaceService;
     private final Map<SseEmitter, AtomicBoolean> activeEmitters = new ConcurrentHashMap<>();
 
     @Override
     public SseEmitter chat(CodingRequestBo bo, Long userId) {
+        // 在建立 SSE 和调用模型前同步拒绝非受控工作区，让调用方获得明确错误。
+        Path root = workspaceService.resolveRoot(bo.getWorkspacePath());
+
         SseEmitter emitter = new SseEmitter(1_800_000L);
         AtomicBoolean emitterActive = new AtomicBoolean(true);
         activeEmitters.put(emitter, emitterActive);
@@ -72,7 +75,7 @@ public class CodingServiceImpl implements ICodingService {
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 } catch (Throwable t) {
-                    log.error("编程 SSE drain 线程异常", t);
+                    log.error("coding_sse operation=DRAIN status=FAILED errorType={}", errorType(t));
                 }
             }, "coding-sse-drain");
             drainThread.start();
@@ -91,7 +94,6 @@ public class CodingServiceImpl implements ICodingService {
                 ChatModel chatModel = chatService.buildChatModel(modelVo);
 
                 // 2. 解析工作目录
-                Path root = resolveWorkspace(bo.getWorkspacePath());
                 Files.createDirectories(root);
 
                 // 3. new 工具实例（不走 BuiltinToolRegistry，注入会话工作目录与 channel）
@@ -121,32 +123,19 @@ public class CodingServiceImpl implements ICodingService {
                 completeEmitter(emitter);
 
             } catch (Exception e) {
-                log.error("编程对话失败", e);
-                String msg = e.getMessage() == null ? e.toString() : e.getMessage();
-                channel.send(CodingSseEvent.error(msg));
-                channel.completeWithError(e);
+                log.error("coding_chat status=FAILED errorType={}", errorType(e));
+                channel.send(safeFailureEvent(e));
+                channel.complete();
                 try {
                     drainThread.join(2_000);
                 } catch (InterruptedException ignored) {
                     Thread.currentThread().interrupt();
                 }
-                sendEmitterEvent(emitter, SseEmitter.event().name("error")
-                    .data(JsonUtils.toJsonString(Map.of("message", msg))));
-                completeEmitterWithError(emitter, e);
+                completeEmitter(emitter);
             }
         });
 
         return emitter;
-    }
-
-    /**
-     * 解析工作目录：前端显式传则用前端的，否则默认 ruoyi-copilot。
-     */
-    private Path resolveWorkspace(String workspacePath) {
-        if (StrUtil.isNotBlank(workspacePath)) {
-            return Paths.get(workspacePath).toAbsolutePath().normalize();
-        }
-        return Paths.get(DEFAULT_WORKSPACE).toAbsolutePath().normalize();
     }
 
     /**
@@ -189,10 +178,11 @@ public class CodingServiceImpl implements ICodingService {
         try { emitter.complete(); } catch (IllegalStateException ignored) { }
     }
 
-    private void completeEmitterWithError(SseEmitter emitter, Throwable error) {
-        AtomicBoolean active = activeEmitters.get(emitter);
-        if (active == null || !active.compareAndSet(true, false)) return;
-        activeEmitters.remove(emitter);
-        try { emitter.completeWithError(error); } catch (IllegalStateException ignored) { }
+    static CodingSseEvent safeFailureEvent(Throwable ignored) {
+        return CodingSseEvent.error(SAFE_CODING_ERROR_MESSAGE);
+    }
+
+    private static String errorType(Throwable error) {
+        return error == null ? "unknown" : error.getClass().getName();
     }
 }

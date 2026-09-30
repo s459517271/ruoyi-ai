@@ -13,7 +13,9 @@ import org.ruoyi.observability.MyChatModelListener;
 import org.ruoyi.service.chat.AbstractChatService;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 
 
 /**
@@ -29,13 +31,28 @@ public class DeepseekServiceImpl implements AbstractChatService {
 
     @Override
     public StreamingChatModel buildStreamingChatModel(ChatModelVo chatModelVo, ChatRequest chatRequest) {
-        return OpenAiStreamingChatModel.builder()
+        boolean thinkingEnabled = Boolean.TRUE.equals(chatRequest.getEnableThinking());
+        boolean replayThinking = thinkingEnabled
+            || Boolean.TRUE.equals(chatRequest.getReplayThinking());
+        var builder = OpenAiStreamingChatModel.builder()
             .baseUrl(chatModelVo.getApiHost())
             .apiKey(chatModelVo.getApiKey())
             .modelName(chatModelVo.getModelName())
             .listeners(List.of(new MyChatModelListener()))
-            .returnThinking(chatRequest.getEnableThinking())
-            .build();
+            .customParameters(thinkingParameters(thinkingEnabled))
+            .returnThinking(thinkingEnabled)
+            // DeepSeek requires reasoning_content on every later tool-bearing request.
+            .sendThinking(replayThinking)
+            .parallelToolCalls(true)
+            .timeout(Duration.ofMinutes(3));
+        if (thinkingEnabled) {
+            builder.reasoningEffort("high");
+        }
+        return builder.build();
+    }
+
+    static Map<String, Object> thinkingParameters(boolean enabled) {
+        return Map.of("thinking", Map.of("type", enabled ? "enabled" : "disabled"));
     }
 
 
